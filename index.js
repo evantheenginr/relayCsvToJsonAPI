@@ -2,7 +2,7 @@ require('dotenv').config();
 const { RateLimiter } = require('limiter');
 const csv = require('csvtojson');
 const { default: axios } = require('axios');
-const limiter = new RateLimiter({ tokensPerInterval: 9, interval: 2000 });
+const limiter = new RateLimiter({ tokensPerInterval: 1, interval: 1 });
 
 //Promises for dependancies, as needed
 const dependancies = {
@@ -12,6 +12,31 @@ const dependancies = {
 
 //Define the workflows here, one per endpoint/csv combo
 const workflows = [
+    {   
+        enabled: true,
+        description: 'bulk load base transactions from csv to lb',
+        data: async () => {
+            const data = await csv().fromFile(process.env.BASE_TRANS_CSV || './basetrans.csv')
+            const chunkSize = 500;
+            const res =  await Promise.all(data.reduce((resultArray, item, index) => {
+                const chunkIndex = Math.floor(index/chunkSize)
+                if(!resultArray[chunkIndex]) {
+                    resultArray[chunkIndex] = [] // start a new chunk
+                }
+                //Note the slight remap here to avoid iterating again in the action
+                resultArray[chunkIndex].push({data: item})
+                return resultArray
+            }
+            , []))
+            return res;
+        },
+        action: async (doc) => {
+            //TODO: we have remapped this to the bulk adaptor, but it's not working yet
+            //there is no documentation on that endpoint, so we had to guess.  we guessed wrong.
+            const mapped = { dataList: doc };
+            await csvToJsonToAPI('post', `${process.env.LB_URL}${process.env.BASE_TRANS_BULK_URL || '/basetrans/v1/basetransaction'}`, mapped)
+        }
+    },
     {   
         enabled: false,
         description: 'load base transactions from csv to lb',
@@ -88,6 +113,20 @@ const workflows = [
     //Add next workflow here, like for contracts or something
 ];
 
+async function authenticate(){
+    const res = await axios({ method: 'post', url: process.env.AUTH_URL, data: {
+            grant_type: 'client_credentials',
+            client_id: process.env.AUTH_CLIENT_ID,
+            client_secret: process.env.AUTH_CLIENT_SECRET,
+            scope: process.env.AUTH_SCOPE
+        },
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded'
+        }
+    });
+    process.env.AUTH_TOKEN = res.data.access_token;
+}
+
 //Lookup ID for header to insert details
 async function getID(method, url, data){
     await limiter.removeTokens(1);
@@ -149,8 +188,8 @@ function log(workflow, level, msg, key, data){
 async function execute(){
     log('controller', 'info', 'workflows jobs are initializing')
     await Promise.allSettled(workflows.map(async (workflow) => {
-        log('controller', 'info', `Running job`, workflow.description)
         if(workflow?.data !== undefined && workflow?.action !== undefined && workflow.enabled === true){
+            log('controller', 'info', `Running job`, workflow.description)
             log('controller', 'info', 'workflow has data and action, running', workflow.description)
             if(workflow.depends !== undefined){
                 log('controller', 'info', 'workflow has dependancy, waiting', workflow.description)
@@ -180,14 +219,29 @@ async function execute(){
 
 //Go!
 (async () => {
-    if(process.env.LB_URL === undefined || process.env.LB_URL === '' || process.env.AUTH_TOKEN === undefined || process.env.AUTH_TOKEN === ''){
+    if(process.env.LB_URL === undefined || 
+        process.env.LB_URL === '' || 
+        process.env.AUTH_URL === undefined || 
+        process.env.AUTH_SCOPE === undefined || 
+        process.env.AUTH_CLIENT_ID === undefined || 
+        process.env.AUTH_CLIENT_SECRET === ''){
         throw new Error('Not setup!  Look at your .env file.  If you have not created a .env file, please consult .env.sample to get started.');
     }
+    //Refresh the auth token every 45 minutes
+    const refresh = setInterval(async () => {
+        log('global', 'info', 'refreshing authentication', 'auth')
+        await authenticate();
+        log('global', 'info', 'authentication refreshed', 'auth', `\nBearer ${process.env.AUTH_TOKEN}`)
+    }, 1000 * 60 * 45);
+    log('global', 'info', 'starting authentication', 'auth')
+    await authenticate();
+    log('global', 'info', 'authentication complete', 'auth', `\nBearer ${process.env.AUTH_TOKEN}`)
     //Mark the log every 15 seconds in case this is long running and we want to know if its stuck
-    const interval = setInterval(() => {
+    const mark = setInterval(() => {
         console.log(`> MARK --- ${new Date().toISOString()} ---`)
     }, 1000 * 15);
     console.log(`> Ready, --- ${new Date().toISOString()} ---`)
     await execute();
-    clearInterval(interval);
+    clearInterval(mark);
+    clearInterval(refresh);
 })();
