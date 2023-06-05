@@ -13,7 +13,7 @@ const dependancies = {
 //Define the workflows here, one per endpoint/csv combo
 const workflows = [
     {   
-        enabled: true,
+        enabled: false,
         description: 'bulk load base transactions from csv to lb',
         data: async () => {
             const data = await csv().fromFile(process.env.BASE_TRANS_CSV || './basetrans.csv')
@@ -34,7 +34,7 @@ const workflows = [
             //TODO: we have remapped this to the bulk adaptor, but it's not working yet
             //there is no documentation on that endpoint, so we had to guess.  we guessed wrong.
             const mapped = { dataList: doc };
-            await csvToJsonToAPI('post', `${process.env.LB_URL}${process.env.BASE_TRANS_BULK_URL || '/basetrans/v1/basetransaction'}`, mapped)
+            await csvToJsonToAPI('post', `${process.env.LB_URL}${process.env.BASE_TRANS_BULK_URL || '/transdata/v1/transaction/basetrans'}`, mapped)
         }
     },
     {   
