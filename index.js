@@ -31,8 +31,6 @@ const workflows = [
             return res;
         },
         action: async (doc) => {
-            //TODO: we have remapped this to the bulk adaptor, but it's not working yet
-            //there is no documentation on that endpoint, so we had to guess.  we guessed wrong.
             const mapped = { dataList: doc };
             await csvToJsonToAPI('post', `${process.env.LB_URL}${process.env.BASE_TRANS_BULK_URL || '/transdata/v1/transaction/basetrans'}`, mapped)
         }
